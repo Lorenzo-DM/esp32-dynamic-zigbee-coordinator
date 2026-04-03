@@ -8,11 +8,11 @@
 
 static const char *TAG = "CONFIG_LOADER";
 
-// ── Stato globale ──────────────────────────────────────────────────────────
+// ── Global State ──────────────────────────────────────────────────────────
 device_config_t g_devices[MAX_DEVICES];
 int             g_device_count = 0;
 
-// ── Buffer HTTP ────────────────────────────────────────────────────────────
+// ── HTTP Buffer ────────────────────────────────────────────────────────────
 #define HTTP_BUF_SIZE 4096
 static char s_http_buf[HTTP_BUF_SIZE];
 static int  s_http_len = 0;
@@ -34,9 +34,9 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt) {
     return ESP_OK;
 }
 
-// ── Helpers jsmn ──────────────────────────────────────────────────────────
+// ── jsmn Helpers ──────────────────────────────────────────────────────────
 
-// Copia il testo di un token in un buffer C-string
+// Copies a token's text into a C-string buffer
 static void tok_str(const char *json, const jsmntok_t *t, char *out, size_t out_len) {
     int len = t->end - t->start;
     if (len >= (int)out_len) len = (int)out_len - 1;
@@ -44,13 +44,13 @@ static void tok_str(const char *json, const jsmntok_t *t, char *out, size_t out_
     out[len] = '\0';
 }
 
-// Confronta un token con una stringa letterale
+// Compares a token with a string literal
 static int tok_eq(const char *json, const jsmntok_t *t, const char *s) {
     int len = t->end - t->start;
     return (int)strlen(s) == len && strncmp(json + t->start, s, len) == 0;
 }
 
-// ── Parser fascia oraria "HH:MM" ──────────────────────────────────────────
+// ── "HH:MM" Time Slot Parser ──────────────────────────────────────────
 static bool parse_time(const char *s, int *hour, int *min) {
     int h = 0, m = 0;
     if (sscanf(s, "%d:%d", &h, &m) != 2) return false;
@@ -58,7 +58,7 @@ static bool parse_time(const char *s, int *hour, int *min) {
     return true;
 }
 
-// ── Parser stringa IEEE (da "00124b..." a little-endian uint8_t[8]) ─────────
+// ── IEEE String Parser (from "00124b..." to little-endian uint8_t[8]) ─────────
 static bool parse_ieee(const char *str, uint8_t *ieee_out) {
     if (strcmp(str, "-1") == 0) return false;
     
@@ -76,7 +76,7 @@ static bool parse_ieee(const char *str, uint8_t *ieee_out) {
         else if (c >= 'A' && c <= 'F') val = c - 'A' + 10;
         
         if (val != -1) {
-            // Little endian: il primo byte della stringa (MSB) va in indice 7
+            // Little endian: the first byte of the string (MSB) goes to index 7
             int byte_idx = 7 - (nibble_idx / 2); 
             if (nibble_idx % 2 == 0) {
                 out[byte_idx] = (val << 4);
@@ -94,7 +94,7 @@ static bool parse_ieee(const char *str, uint8_t *ieee_out) {
     return false;
 }
 
-// ── Parser principale JSON ────────────────────────────────────────────────
+// ── Main JSON Parser ────────────────────────────────────────────────
 static bool parse_json(const char *json, int len) {
     #define MAX_TOK 512
     static jsmntok_t toks[MAX_TOK];
@@ -108,7 +108,7 @@ static bool parse_json(const char *json, int len) {
 
     g_device_count = 0;
 
-    // Cerca la chiave "devices" a livello root
+    // Search for "devices" key at root level
     int devices_arr = -1;
     for (int i = 1; i < r - 1; i++) {
         if (toks[i].type == JSMN_STRING && tok_eq(json, &toks[i], "devices")) {
@@ -119,12 +119,12 @@ static bool parse_json(const char *json, int len) {
         }
     }
     if (devices_arr < 0) {
-        ESP_LOGE(TAG, "Campo 'devices' non trovato nel JSON");
+        ESP_LOGE(TAG, "'devices' field not found in JSON");
         return false;
     }
 
     int num_devices = toks[devices_arr].size;
-    int idx = devices_arr + 1; // primo elemento dell'array
+    int idx = devices_arr + 1; // first element of the array
 
     for (int d = 0; d < num_devices && g_device_count < MAX_DEVICES; d++) {
         if (toks[idx].type != JSMN_OBJECT) { idx++; continue; }
@@ -135,7 +135,7 @@ static bool parse_json(const char *json, int len) {
         dev->temp_low  = 1600;
 
         int obj_size = toks[idx].size;
-        idx++; // entra nell'oggetto
+        idx++; // enter the object
 
         for (int f = 0; f < obj_size; f++) {
             if (idx >= r) break;
@@ -161,7 +161,7 @@ static bool parse_json(const char *json, int len) {
                 dev->enabled = tok_eq(json, &toks[idx], "true");
                 idx++;
             }
-            // ── config (oggetto annidato) ──
+            // ── config (nested object) ──
             else if (tok_eq(json, &toks[idx], "config")) {
                 idx++;
                 if (toks[idx].type != JSMN_OBJECT) { idx++; continue; }
@@ -185,7 +185,7 @@ static bool parse_json(const char *json, int len) {
                         dev->temp_low = (int16_t)atoi(tmp);
                         idx++;
                     }
-                    // schedule (array di {start, end})
+                    // schedule (array of {start, end})
                     else if (tok_eq(json, &toks[idx], "schedule")) {
                         idx++;
                         if (toks[idx].type != JSMN_ARRAY) { idx++; continue; }
@@ -240,7 +240,7 @@ static bool parse_json(const char *json, int len) {
     return g_device_count > 0;
 }
 
-// ── API pubblica ───────────────────────────────────────────────────────────
+// ── Public API ───────────────────────────────────────────────────────────
 
 bool config_load_from_url(const char *url) {
     ESP_LOGI(TAG, "Download config: %s", url);
@@ -251,12 +251,12 @@ bool config_load_from_url(const char *url) {
         .url            = url,
         .event_handler  = http_event_handler,
         .timeout_ms     = 10000,
-        .skip_cert_common_name_check = true,  // per HTTPS con cert self-signed
+        .skip_cert_common_name_check = true,  // for HTTPS with self-signed cert
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
-        ESP_LOGE(TAG, "esp_http_client_init fallita");
+        ESP_LOGE(TAG, "esp_http_client_init failed");
         return false;
     }
 
@@ -265,7 +265,7 @@ bool config_load_from_url(const char *url) {
     esp_http_client_cleanup(client);
 
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP request fallita: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "HTTP request failed: %s", esp_err_to_name(err));
         return false;
     }
     if (status != 200) {
@@ -273,7 +273,7 @@ bool config_load_from_url(const char *url) {
         return false;
     }
 
-    ESP_LOGI(TAG, "Ricevuti %d bytes. Parsing...", s_http_len);
+    ESP_LOGI(TAG, "Received %d bytes. Parsing...", s_http_len);
     return parse_json(s_http_buf, s_http_len);
 }
 
@@ -285,10 +285,10 @@ int16_t config_get_current_temp(const device_config_t *dev, int hour, int min) {
         int end   = e->end_hour   * 60 + e->end_min;
         bool in_range;
         if (end > start) {
-            // intervallo normale (es. 05:00–08:00)
+            // normal interval (e.g. 05:00–08:00)
             in_range = cur >= start && cur < end;
         } else {
-            // intervallo a cavallo mezzanotte (es. 23:00–00:30)
+            // overnight interval (e.g. 23:00–00:30)
             in_range = cur >= start || cur < end;
         }
         if (in_range) return dev->temp_high;
