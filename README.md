@@ -1,74 +1,72 @@
-| Supported Targets | ESP32-C5 | ESP32-C6 | ESP32-H2 |
-| ----------------- | -------- | -------- | -------- |
+# Zigbee HA Valve Regulator Coordinator (ESP32-C6)
 
-# Light Switch Example
+This project implements a **Zigbee Gateway / Coordinator** centered around an ESP32-C6. It is designed to automate the temperature scheduling of multiple **Zigbee TRVs** (Thermostatic Radiator Valves), such as Sonoff or Moes valves.
 
-This test code shows how to configure Zigbee Coordinator and use it as an HA on/off_switch.
+## Key Features
 
-The ESP Zigbee SDK provides more examples and tools for productization:
-* [ESP Zigbee SDK Docs](https://docs.espressif.com/projects/esp-zigbee-sdk)
-* [ESP Zigbee SDK Repo](https://github.com/espressif/esp-zigbee-sdk)
+- **Automated Scheduling**: Downloads a `config.json` file from a remote server (e.g., Gitea/GitHub) over WiFi to define heating schedules for multiple devices.
+- **Dynamic Slot Matching**: Supports multiple time slots per day. Each slot defines a high-temperature period; outside these slots, valves are set to a fallback low temperature.
+- **Zigbee <-> WiFi Time Sync**: Connects to WiFi initially to synchronize system time via **SNTP** and fetch the latest configuration.
+- **Radio Sharing Optimization**: Automatically shuts down WiFi after synchronization to minimize interference and free up the 2.4GHz radio for the Zigbee stack.
+- **Manual Control**: The physical **BOOT button** on the ESP32-C6 acts as a global override, allowing you to toggle all connected valves between High and Low temperatures manually.
+- **Auto-Pairing & Identification**: Automatically matches joining Zigbee devices to the configuration using their **IEEE address**.
 
 ## Hardware Required
 
-* One development board with ESP32-H2 SoC acting as Zigbee Coordinator (loaded with HA_on_off_switch)
-* A USB cable for power supply and programming
-* Choose another ESP32-H2 as Zigbee end-device (see [HA_on_off_light](../HA_on_off_light/))
+- **ESP32-C6** Development Board.
+- One or more **Zigbee TRVs** (e.g., Sonoff TRVZB).
+- WiFi environment with internet access for SNTP and JSON fetching.
 
-## Configure the project
+## Software Configuration
 
-Before project configuration and build, make sure to set the correct chip target using `idf.py --preview set-target TARGET` command.
+### 1. WiFi & Server Credentials
+Modify `main/secrets.h` (using `main/secrets.example` as a template) to set your WiFi SSID, Password, and the Base URL for your configuration server.
 
-## Erase the NVRAM
-
-Before flash it to the board, it is recommended to erase NVRAM if user doesn't want to keep the previous examples or other projects stored info using `idf.py -p PORT erase-flash`
+### 2. JSON Configuration Format
+The project expects a JSON file with the following structure:
+```json
+{
+  "devices": [
+    {
+      "name": "Living Room",
+      "ieee": "00124b002a123456",
+      "enabled": true,
+      "config": {
+        "temp_high": 2100,
+        "temp_low": 1700,
+        "schedule": [
+          { "start": "07:00", "end": "09:00" },
+          { "start": "18:00", "end": "22:00" }
+        ]
+      }
+    }
+  ]
+}
+```
+*Note: Temperatures are in 1/100ths of a degree (e.g., 2100 = 21.00°C).*
 
 ## Build and Flash
 
-Build the project, flash it to the board, and start the monitor tool to view the serial output by running `idf.py -p PORT flash monitor`.
+1. Set the target to ESP32-C6:
+   ```bash
+   idf.py set-target esp32c6
+   ```
+2. Build and flash the firmware:
+   ```bash
+   idf.py build flash monitor
+   ```
 
-(To exit the serial monitor, type ``Ctrl-]``.)
+## Initialization Sequence
 
-## Example Output
+1. **NVS Init**: Prepares internal storage.
+2. **WiFi Connect**: Connects to the configured SSID.
+3. **HTTP Download**: Fetches the TRV configuration JSON.
+4. **SNTP Sync**: Synchronizes the internal RTC with network time.
+5. **WiFi Shutdown**: De-initializes WiFi components to optimize Zigbee performance.
+6. **Zigbee Start**: Initializes the Zigbee Coordinator and opens the network for pairing.
 
-As you run the example, you will see the following log:
+## Usage
 
-```
-I (441) main_task: Started on CPU0                                                                                                                                                                                                                                                        
-I (441) main_task: Calling app_main()                                                                                                        
-I (461) phy: phy_version: 230,2, 9aae6ea, Jan 15 2024, 11:17:12       
-I (461) phy: libbtbb version: 944f18e, Jan 15 2024, 11:17:25                                                                                 
-I (471) main_task: Returned from app_main()                                                                                                  
-I (601) ESP_ZB_ON_OFF_SWITCH: ZDO signal: ZDO Config Ready (0x17), status: ESP_FAIL                                                          
-I (601) ESP_ZB_ON_OFF_SWITCH: Initialize Zigbee stack                                                                                        
-I (611) gpio: GPIO[9]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:2                                                 
-I (611) ESP_ZB_ON_OFF_SWITCH: Deferred driver initialization successful                                                                      
-I (621) ESP_ZB_ON_OFF_SWITCH: Device started up in  factory-reset mode                                                                       
-I (621) ESP_ZB_ON_OFF_SWITCH: Start network formation                                                                                        
-W (781) ESP_ZB_ON_OFF_SWITCH: Network(0x13af) closed, devices joining not allowed.                                                           
-I (781) ESP_ZB_ON_OFF_SWITCH: Formed network successfully (Extended PAN ID: 74:4d:bd:ff:fe:63:f7:30, PAN ID: 0x13af, Channel:13, Short Address: 0x0000)
-I (1391) ESP_ZB_ON_OFF_SWITCH: Network(0x13af) is open for 180 seconds                                                                       
-I (1391) ESP_ZB_ON_OFF_SWITCH: Network steering started                                                                                      
-I (9561) ESP_ZB_ON_OFF_SWITCH: ZDO signal: NWK Device Associated (0x12), status: ESP_OK                                                      
-I (9561) ESP_ZB_ON_OFF_SWITCH: ZDO signal: ZDO Device Update (0x30), status: ESP_OK                                                          
-I (9601) ESP_ZB_ON_OFF_SWITCH: New device commissioned or rejoined (short: 0x7c16)                                                           
-I (9671) ESP_ZB_ON_OFF_SWITCH: Found light                            
-I (9671) ESP_ZB_ON_OFF_SWITCH: Try to bind On/Off                                                                                            
-I (9681) ESP_ZB_ON_OFF_SWITCH: Bound successfully!                                                                                           
-I (9681) ESP_ZB_ON_OFF_SWITCH: The light originating from address(0x7c16) on endpoint(10)                                                    
-I (9751) ESP_ZB_ON_OFF_SWITCH: ZDO signal: ZDO Device Authorized (0x2f), status: ESP_OK                                                      
-I (9781) ESP_ZB_ON_OFF_SWITCH: Network(0x13af) is open for 180 seconds                                                                       
-I (16451) ESP_ZB_ON_OFF_SWITCH: Send 'on_off toggle' command                                                                                 
-I (17011) ESP_ZB_ON_OFF_SWITCH: Send 'on_off toggle' command                                                                                 
-I (17441) ESP_ZB_ON_OFF_SWITCH: Send 'on_off toggle' command                                                                                 
-I (17831) ESP_ZB_ON_OFF_SWITCH: Send 'on_off toggle' command
-```
-
-## Light Control Functions
-
-  * By toggling the switch button (BOOT) on this board, the LED on the board loaded with the `HA_on_off_light` example will turn on and off.
-
-
-## Troubleshooting
-
-For any technical queries, please open an [issue](https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.
+- **Pairing**: Put your TRV into pairing mode. Once it joins the network, the ESP32-C6 will match its IEEE address against the JSON config. If found, it will immediately apply the current scheduled temperature.
+- **Monitoring**: Use the serial monitor to view current time, connected devices, and temperature updates.
+- **Manual Override**: Press the **BOOT button** to force all valves to "HIGH" temperature mode. Press again to force them to "LOW" mode. The scheduled automation will resume at the next time slot transition.
