@@ -8,7 +8,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "ha/esp_zigbee_ha_standard.h"
-#include "esp_zb_switch.h"
+#include "ha_valve_regulator.h"
 #include "secrets.h"
 #include "esp_zigbee_core.h"
 #include "zcl/esp_zigbee_zcl_common.h"
@@ -28,7 +28,7 @@ static EventGroupHandle_t s_wifi_event_group;
 static void set_temperature(uint16_t zb_short_addr, int16_t setpoint, const char *name) {
     esp_zb_zcl_write_attr_cmd_t write_req;
     write_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
-    write_req.zcl_basic_cmd.src_endpoint = 1;
+    write_req.zcl_basic_cmd.src_endpoint = HA_VALVE_REGULATOR_ENDPOINT;
     write_req.zcl_basic_cmd.dst_endpoint = 1;  // Sonoff TRV = endpoint 1
     write_req.zcl_basic_cmd.dst_addr_u.addr_short = zb_short_addr;
     write_req.clusterID = ESP_ZB_ZCL_CLUSTER_ID_THERMOSTAT; // 0x0201
@@ -303,7 +303,7 @@ static void esp_zb_task(void *pvParameters) {
 
     esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
     esp_zb_endpoint_config_t ep_cfg = {
-        .endpoint       = 1,
+        .endpoint       = HA_VALVE_REGULATOR_ENDPOINT,
         .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
         .app_device_id  = ESP_ZB_HA_HOME_GATEWAY_DEVICE_ID,
     };

@@ -59,7 +59,7 @@ static switch_func_pair_t *switch_func_pair;
 static esp_switch_callback_t func_ptr;
 /* which button is pressed */
 static uint8_t switch_num;
-static const char *TAG = "ESP_ZB_SWITCH";
+static const char *TAG = "HA_VALVE_DRIVER";
 
 static void IRAM_ATTR gpio_isr_handler(void *arg)
 {
