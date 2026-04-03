@@ -1186,6 +1186,33 @@ CONFIG_EFUSE_MAX_BLK_LEN=256
 # end of eFuse Bit Manager
 
 #
+# ESP-TLS
+#
+# default:
+CONFIG_ESP_TLS_USING_MBEDTLS=y
+# default:
+# CONFIG_ESP_TLS_CUSTOM_STACK is not set
+# default:
+# CONFIG_ESP_TLS_USE_SECURE_ELEMENT is not set
+# default:
+CONFIG_ESP_TLS_USE_DS_PERIPHERAL=y
+# default:
+# CONFIG_ESP_TLS_CLIENT_SESSION_TICKETS is not set
+# default:
+# CONFIG_ESP_TLS_SERVER_SESSION_TICKETS is not set
+# default:
+# CONFIG_ESP_TLS_SERVER_CERT_SELECT_HOOK is not set
+# default:
+# CONFIG_ESP_TLS_SERVER_MIN_AUTH_MODE_OPTIONAL is not set
+# default:
+# CONFIG_ESP_TLS_PSK_VERIFICATION is not set
+# default:
+# CONFIG_ESP_TLS_INSECURE is not set
+# default:
+CONFIG_ESP_TLS_DYN_BUF_STRATEGY_SUPPORTED=y
+# end of ESP-TLS
+
+#
 # Wireless Coexistence
 #
 # default:
@@ -1273,6 +1300,23 @@ CONFIG_ESP_EVENT_POST_FROM_ISR=y
 # default:
 CONFIG_ESP_EVENT_POST_FROM_IRAM_ISR=y
 # end of Event Loop Library
+
+#
+# ESP HTTP client
+#
+# default:
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+# default:
+# CONFIG_ESP_HTTP_CLIENT_ENABLE_BASIC_AUTH is not set
+# default:
+# CONFIG_ESP_HTTP_CLIENT_ENABLE_DIGEST_AUTH is not set
+# default:
+# CONFIG_ESP_HTTP_CLIENT_ENABLE_CUSTOM_TRANSPORT is not set
+# default:
+# CONFIG_ESP_HTTP_CLIENT_ENABLE_GET_CONTENT_RANGE is not set
+# default:
+CONFIG_ESP_HTTP_CLIENT_EVENT_POST_TIMEOUT=2000
+# end of ESP HTTP client
 
 #
 # Hardware Settings
@@ -2816,7 +2860,7 @@ CONFIG_MBEDTLS_ECC_OTHER_CURVES_SOFT_FALLBACK=y
 # default:
 # CONFIG_MBEDTLS_ATCA_HW_ECDSA_VERIFY is not set
 # default:
-# CONFIG_MBEDTLS_HARDWARE_RSA_DS_PERIPHERAL is not set
+CONFIG_MBEDTLS_HARDWARE_RSA_DS_PERIPHERAL=y
 # end of Hardware Acceleration
 
 #
@@ -2998,6 +3042,22 @@ CONFIG_SPI_FLASH_SUPPORT_GD_CHIP=y
 # default:
 CONFIG_SPI_FLASH_ENABLE_ENCRYPTED_READ_WRITE=y
 # end of SPI Flash driver
+
+#
+# TCP Transport
+#
+
+#
+# Websocket
+#
+# default:
+CONFIG_WS_TRANSPORT=y
+# default:
+CONFIG_WS_BUFFER_SIZE=1024
+# default:
+# CONFIG_WS_DYNAMIC_BUFFER is not set
+# end of Websocket
+# end of TCP Transport
 
 #
 # Virtual file system
