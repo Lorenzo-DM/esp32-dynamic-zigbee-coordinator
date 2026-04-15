@@ -12,22 +12,22 @@
 #include "secrets.h"
 #include "esp_zigbee_core.h"
 #include "zcl/esp_zigbee_zcl_common.h"
+#include "driver/gpio.h"
 #include "config_loader.h"
 
-static const char *TAG = "CHRONOTHERMOSTAT_C6";
+
+static const char *TAG = DEVICE_NAME;
 
 // WiFi EventGroup Bits
 #define WIFI_CONNECTED_BIT BIT0
 static EventGroupHandle_t s_wifi_event_group;
 
-// Full JSON config URL (base_url from Gitea project)
+// Full JSON config URL
 #define CONFIG_JSON_URL  BASE_URL "/raw/branch/main/config.json"
 
 #define BOARD_LED_GPIO   GPIO_NUM_15 
 
-// ========================================================
 // 0. HELPER: BLINK LED
-// ========================================================
 static void blink_led(int times, int ms_on, int ms_off) {
     for (int i = 0; i < times; i++) {
         gpio_set_level(BOARD_LED_GPIO, 1);
@@ -39,9 +39,7 @@ static void blink_led(int times, int ms_on, int ms_off) {
     }
 }
 
-// ========================================================
 // 0b. HELPER: RESTORE CACHED CONNECTIONS
-// ========================================================
 static void zb_restore_connections() {
     ESP_LOGI(TAG, "=> Checking for already paired devices in stack cache...");
     int restored = 0;
@@ -63,9 +61,7 @@ static void zb_restore_connections() {
     }
 }
 
-// ========================================================
 // 0c. HELPER: GET CURRENT TIMESTAMP STRING
-// ========================================================
 static void get_timestamp(char *buf, size_t len) {
     time_t now;
     struct tm timeinfo;
@@ -78,9 +74,7 @@ static void get_timestamp(char *buf, size_t len) {
     }
 }
 
-// ========================================================
 // 1. FUNCTION TO SEND TEMPERATURE TO A VALVE
-// ========================================================
 static void set_temperature(uint16_t zb_short_addr, int16_t setpoint, const char *name) {
     esp_zb_zcl_write_attr_cmd_t write_req;
     write_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
@@ -117,9 +111,7 @@ static void set_temperature(uint16_t zb_short_addr, int16_t setpoint, const char
     vTaskDelay(pdMS_TO_TICKS(100));
 }
 
-// ========================================================
 // 2. CHRONOTHERMOSTAT TASK (checks schedules for all devices)
-// ========================================================
 void chronothermostat_task(void *pvParameters) {
     time_t now;
     struct tm timeinfo;
@@ -179,9 +171,7 @@ void chronothermostat_task(void *pvParameters) {
     }
 }
 
-// ========================================================
 // 3. ZIGBEE EVENT MANAGEMENT
-// ========================================================
 
 static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask) {
     ESP_ERROR_CHECK(esp_zb_bdb_start_top_level_commissioning(mode_mask));
@@ -292,10 +282,8 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
     }
 }
 
-// ========================================================
 // 3b. BOOT BUTTON - cycles between temp_high and temp_low
-//     for all connected devices
-// ========================================================
+// for all connected devices
 static void zb_buttons_handler(switch_func_pair_t *button_func_pair) {
     static bool toggle_high = false;
     if (button_func_pair->func != SWITCH_ONOFF_TOGGLE_CONTROL) return;
@@ -312,9 +300,7 @@ static void zb_buttons_handler(switch_func_pair_t *button_func_pair) {
     }
 }
 
-// ========================================================
 // 4. WIFI
-// ========================================================
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -366,9 +352,7 @@ static void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-// ========================================================
 // 5. ZIGBEE TASK (dedicated mandatory task)
-// ========================================================
 static void esp_zb_task(void *pvParameters) {
     esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZC_CONFIG();
     esp_zb_init(&zb_nwk_cfg);
@@ -401,9 +385,7 @@ static void esp_zb_task(void *pvParameters) {
     esp_zb_stack_main_loop();
 }
 
-// ========================================================
 // 6. MAIN
-// ========================================================
 void app_main(void) {
     ESP_LOGI(TAG, "=============================================");
     ESP_LOGI(TAG, " ZIGBEE CHRONOTHERMOSTAT - ESP32-C6");
