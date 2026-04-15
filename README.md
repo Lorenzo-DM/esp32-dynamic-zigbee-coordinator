@@ -70,3 +70,13 @@ The project expects a JSON file with the following structure:
 - **Pairing**: Put your TRV into pairing mode. Once it joins the network, the ESP32-C6 will match its IEEE address against the JSON config. If found, it will immediately apply the current scheduled temperature.
 - **Monitoring**: Use the serial monitor to view current time, connected devices, and temperature updates.
 - **Manual Override**: Press the **BOOT button** to force all valves to "HIGH" temperature mode. Press again to force them to "LOW" mode. The scheduled automation will resume at the next time slot transition.
+
+## License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+### Third-Party Components
+This project uses the following third-party components:
+- **[jsmn](main/jsmn.h)**: Minimal JSON tokenizer (MIT License).
+- **espressif__esp-zboss-lib**: Zigbee stack (Custom DSR/Espressif License).
+- **espressif__esp-zigbee-lib**: ESP-Zigbee SDK (Apache License 2.0).
