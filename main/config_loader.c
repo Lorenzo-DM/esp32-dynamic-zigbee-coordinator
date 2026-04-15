@@ -297,12 +297,25 @@ int16_t config_get_current_temp(const device_config_t *dev, int hour, int min) {
 }
 
 device_config_t *config_find_and_connect(const uint8_t *ieee_addr, uint16_t zb_short_addr) {
+    ESP_LOGI(TAG, "--- DEBUG MATCHING ---");
+    ESP_LOGI(TAG, "Cerco target IEEE: %02x%02x%02x%02x%02x%02x%02x%02x", 
+             ieee_addr[7], ieee_addr[6], ieee_addr[5], ieee_addr[4],
+             ieee_addr[3], ieee_addr[2], ieee_addr[1], ieee_addr[0]);
+    ESP_LOGI(TAG, "Dispositivi in JSON: %d", g_device_count);
+
     for (int i = 0; i < g_device_count; i++) {
+        ESP_LOGI(TAG, "  -> [%d] '%s' -- known=%d -- IEEE conf: %02x%02x%02x%02x%02x%02x%02x%02x",
+                 i, g_devices[i].name, g_devices[i].ieee_known,
+                 g_devices[i].ieee_addr[7], g_devices[i].ieee_addr[6], g_devices[i].ieee_addr[5], g_devices[i].ieee_addr[4],
+                 g_devices[i].ieee_addr[3], g_devices[i].ieee_addr[2], g_devices[i].ieee_addr[1], g_devices[i].ieee_addr[0]);
+
         if (g_devices[i].ieee_known && memcmp(g_devices[i].ieee_addr, ieee_addr, 8) == 0) {
+            ESP_LOGI(TAG, "  -> MATCH TROVATO!");
             g_devices[i].zb_short_addr = zb_short_addr;
             g_devices[i].connected = true;
             return &g_devices[i];
         }
     }
+    ESP_LOGI(TAG, "----------------------");
     return NULL;
 }
