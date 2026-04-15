@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Lorenzo-DM
+ * Licensed under the MIT License. See LICENSE file in the project root for full license information.
+ */
+
 #include "config_loader.h"
 #include "jsmn.h"
 #include "esp_http_client.h"
