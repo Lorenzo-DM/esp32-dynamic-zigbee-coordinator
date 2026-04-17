@@ -1,4 +1,4 @@
-# Zigbee HA Valve Regulator Coordinator (ESP32-C6)
+# Zigbee Valve Regulator Coordinator (ESP32-C6)
 
 This project implements a **Zigbee Gateway / Coordinator** centered around an ESP32-C6. It is designed to automate the temperature scheduling of multiple **Zigbee TRVs** (Thermostatic Radiator Valves), such as Sonoff or Moes valves.
 
@@ -16,6 +16,10 @@ This project implements a **Zigbee Gateway / Coordinator** centered around an ES
 - **ESP32-C6** Development Board.
 - One or more **Zigbee TRVs** (e.g., Sonoff TRVZB).
 - WiFi environment with internet access for SNTP and JSON fetching.
+
+## Development Environment Setup
+This project requires the Espressif IoT Development Framework [ESP-IDF](https://github.com/espressif/esp-idf/tree/master).
+Follow Official Installation Steps
 
 ## Software Configuration
 
