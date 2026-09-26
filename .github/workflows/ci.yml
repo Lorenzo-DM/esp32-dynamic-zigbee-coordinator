@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+jobs:
+  build:
+    name: Firmware build (esp32c6)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The real secrets.h is gitignored; provide a dummy so the firmware compiles.
+      - name: Provide dummy secrets
+        run: cp main/secrets.example main/secrets.h
+
+      - name: ESP-IDF build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: release-v5.3
+          target: esp32c6
+          path: '.'
+
+  host-tests:
+    name: Host unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S test/host -B build_host
+
+      - name: Build
+        run: cmake --build build_host
+
+      - name: Test
+        run: ctest --test-dir build_host --output-on-failure
+
+  format-check:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Pinned to match the .clang-format rules (developed against 15.0.7).
+      - name: Install clang-format
+        run: pip install "clang-format==15.0.7"
+
+      - name: Check formatting
+        run: |
+          files=$(find main -maxdepth 1 \( -name '*.c' -o -name '*.h' \) ! -name 'jsmn.h')
+          echo "Checking:"; echo "$files"
+          clang-format --dry-run --Werror $files
