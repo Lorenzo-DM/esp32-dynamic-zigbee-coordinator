@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "esp_wifi.h"
+#include "esp_system.h"
 #include "esp_sntp.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
@@ -28,9 +29,26 @@ static const char *TAG = DEVICE_NAME;
 static EventGroupHandle_t s_wifi_event_group;
 
 // Full JSON config URL
-#define CONFIG_JSON_URL  BASE_URL "/raw/branch/main/config.json"
+#define CONFIG_JSON_URL BASE_URL "/raw/branch/main/config.json"
 
-#define BOARD_LED_GPIO   GPIO_NUM_15 
+#define BOARD_LED_GPIO CONFIG_VALVE_LED_GPIO
+
+// Setpoint forced by the BOOT button, per device (0 = follow the schedule).
+// Cleared at that device's next slot transition.
+static int16_t s_forced_temp[MAX_DEVICES];
+
+// Set in app_main when the config download or SNTP failed at boot.
+static bool s_degraded = false;
+
+static bool time_is_valid(const struct tm *ti) {
+    return ti->tm_year >= (2024 - 1900);
+}
+
+// Temperature a device should have right now: the forced one, if any, else the scheduled one.
+static int16_t device_target(int i, const struct tm *ti) {
+    if (s_forced_temp[i]) return s_forced_temp[i];
+    return config_get_current_temp(&g_devices[i], ti->tm_hour, ti->tm_min);
+}
 
 // 0. HELPER: BLINK LED
 static void blink_led(int times, int ms_on, int ms_off) {
@@ -50,10 +68,10 @@ static void zb_restore_connections() {
     int restored = 0;
     for (int i = 0; i < g_device_count; i++) {
         device_config_t *d = &g_devices[i];
-        
+
         // Query the stack for the short address associated with this IEEE
         uint16_t short_addr = esp_zb_address_short_by_ieee(d->ieee_addr);
-        
+
         // 0xFFFE is unknown/missing, 0xFFFF is broadcast/error
         if (short_addr < 0xFFFE) {
             ESP_LOGI(TAG, "   => Found cached device '%s' at 0x%04x. Restoring connection...", d->name, short_addr);
@@ -72,7 +90,7 @@ static void get_timestamp(char *buf, size_t len) {
     struct tm timeinfo;
     time(&now);
     localtime_r(&now, &timeinfo);
-    if (timeinfo.tm_year < (2024 - 1900)) {
+    if (!time_is_valid(&timeinfo)) {
         snprintf(buf, len, "[--- NOT SYNCED ---]");
     } else {
         strftime(buf, len, "[%d/%m/%Y %H:%M:%S]", &timeinfo);
@@ -84,15 +102,16 @@ static void set_temperature(uint16_t zb_short_addr, int16_t setpoint, const char
     esp_zb_zcl_write_attr_cmd_t write_req;
     write_req.address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT;
     write_req.zcl_basic_cmd.src_endpoint = HA_VALVE_REGULATOR_ENDPOINT;
-    write_req.zcl_basic_cmd.dst_endpoint = 1;  // Sonoff TRV = endpoint 1
+    write_req.zcl_basic_cmd.dst_endpoint = 1; // Sonoff TRV = endpoint 1
     write_req.zcl_basic_cmd.dst_addr_u.addr_short = zb_short_addr;
     write_req.clusterID = ESP_ZB_ZCL_CLUSTER_ID_THERMOSTAT; // 0x0201
 
-    // IMPORTANT: In the ESP-Zigbee SDK, write_attr is asynchronous.
-    // We must use a static variable to ensure the pointer remains valid 
-    // until the stack actually sends the packet.
-    static int16_t setpoint_val;
-    setpoint_val = setpoint;
+    // esp_zb_zcl_write_attr_cmd_req() serializes the attribute value into the
+    // outgoing ZCL frame synchronously (it returns the transaction sequence
+    // number), so a stack-local value is fine. A previous `static` here caused
+    // a shared-state race, since set_temperature() runs from three tasks
+    // (chrono, button, device-announce handler).
+    int16_t setpoint_val = setpoint;
 
     esp_zb_zcl_attribute_t attr_field;
     attr_field.id = ESP_ZB_ZCL_ATTR_THERMOSTAT_OCCUPIED_HEATING_SETPOINT_ID; // 0x0012
@@ -109,9 +128,9 @@ static void set_temperature(uint16_t zb_short_addr, int16_t setpoint, const char
 
     char tbuf[64];
     get_timestamp(tbuf, sizeof(tbuf));
-    ESP_LOGI(TAG, "%s => [%s] 0x04%x setpoint=%d (%.1f C)",
+    ESP_LOGI(TAG, "%s => [%s] 0x%04x setpoint=%d (%.1f C)",
              tbuf, name, (unsigned int)zb_short_addr, setpoint, setpoint / 100.0);
-    
+
     // A small delay to avoid saturating the Zigbee stack when sending to multiple valves
     vTaskDelay(pdMS_TO_TICKS(100));
 }
@@ -122,6 +141,8 @@ void chronothermostat_task(void *pvParameters) {
     struct tm timeinfo;
     int last_minute = -1;
     int last_hour = -1;
+    TickType_t last_resync = 0;
+    bool warned_no_time = false;
 
     // Wait for Zigbee to be ready and valves to connect
     vTaskDelay(20000 / portTICK_PERIOD_MS);
@@ -129,6 +150,25 @@ void chronothermostat_task(void *pvParameters) {
     while (1) {
         time(&now);
         localtime_r(&now, &timeinfo);
+
+#if CONFIG_VALVE_DEGRADED_RESTART_MINUTES > 0
+        // WiFi is off after boot, so a missing config or clock can only be fixed by a restart
+        if (s_degraded &&
+            xTaskGetTickCount() >= pdMS_TO_TICKS(CONFIG_VALVE_DEGRADED_RESTART_MINUTES * 60 * 1000)) {
+            ESP_LOGW(TAG, "[CHRONO] Config or time missing since boot: restarting to retry...");
+            esp_restart();
+        }
+#endif
+
+        // Without a valid clock the schedule is meaningless: leave the valves untouched
+        if (!time_is_valid(&timeinfo)) {
+            if (!warned_no_time) {
+                ESP_LOGW(TAG, "[CHRONO] Time not synchronized: schedule suspended");
+                warned_no_time = true;
+            }
+            vTaskDelay(10000 / portTICK_PERIOD_MS);
+            continue;
+        }
 
         // Periodic log every 5 minutes
         if (timeinfo.tm_min % 5 == 0 && timeinfo.tm_sec < 12) {
@@ -138,33 +178,45 @@ void chronothermostat_task(void *pvParameters) {
             for (int i = 0; i < g_device_count; i++) {
                 device_config_t *d = &g_devices[i];
                 if (!d->enabled) continue;
-                int16_t target = config_get_current_temp(d, timeinfo.tm_hour, timeinfo.tm_min);
-                ESP_LOGI(TAG, "  [%s] connected=%s addr=0x%04x sched_target=%.1f C",
+                int16_t target = device_target(i, &timeinfo);
+                ESP_LOGI(TAG, "  [%s] connected=%s addr=0x%04x target=%.1f C%s",
                          d->name, d->connected ? "YES" : "NO",
-                         (unsigned int)d->zb_short_addr, target / 100.0);
+                         (unsigned int)d->zb_short_addr, target / 100.0,
+                         s_forced_temp[i] ? " (forced)" : "");
             }
         }
 
         // Every new minute, check if action is needed
         if (timeinfo.tm_min != last_minute) {
-            
-            // If not the first run, check for "slot transitions"
-            if (last_minute != -1 && last_hour != -1) {
-                for (int i = 0; i < g_device_count; i++) {
-                    device_config_t *d = &g_devices[i];
-                    if (!d->enabled || !d->connected) continue;
+            // Re-send the current target on the first run (devices restored from the
+            // stack cache after a reboot have not received it) and periodically, so a
+            // lost write does not leave a valve wrong until the next slot transition.
+            bool resync = last_minute == -1 ||
+                          (CONFIG_VALVE_RESYNC_MINUTES > 0 &&
+                           xTaskGetTickCount() - last_resync >= pdMS_TO_TICKS(CONFIG_VALVE_RESYNC_MINUTES * 60 * 1000));
+            if (resync) last_resync = xTaskGetTickCount();
 
+            for (int i = 0; i < g_device_count; i++) {
+                device_config_t *d = &g_devices[i];
+                if (!d->enabled || !d->connected) continue;
+
+                bool transition = false;
+                if (last_minute != -1) {
                     int16_t target_hour = config_get_current_temp(d, timeinfo.tm_hour, timeinfo.tm_min);
                     int16_t target_prev = config_get_current_temp(d, last_hour, last_minute);
-
-                    // Write temperature ONLY if a switch between high and low slots occurred
-                    if (target_hour != target_prev) {
+                    transition = target_hour != target_prev;
+                    if (transition) {
                         char tbuf[64];
                         get_timestamp(tbuf, sizeof(tbuf));
-                        ESP_LOGI(TAG, "%s [CHRONO] Slot change! '%s' goes from %.1f C to %.1f C", 
+                        ESP_LOGI(TAG, "%s [CHRONO] Slot change! '%s' goes from %.1f C to %.1f C",
                                  tbuf, d->name, target_prev / 100.0, target_hour / 100.0);
+                        s_forced_temp[i] = 0; // a slot transition ends the manual override
                         set_temperature(d->zb_short_addr, target_hour, d->name);
                     }
+                }
+                if (resync && !transition) {
+                    ESP_LOGI(TAG, "[CHRONO] Re-sync '%s'", d->name);
+                    set_temperature(d->zb_short_addr, device_target(i, &timeinfo), d->name);
                 }
             }
 
@@ -183,7 +235,7 @@ static void bdb_start_top_level_commissioning_cb(uint8_t mode_mask) {
 }
 
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
-    uint32_t *p_sg_p   = signal_struct->p_app_signal;
+    uint32_t *p_sg_p = signal_struct->p_app_signal;
     esp_err_t err_status = signal_struct->esp_err_status;
     esp_zb_app_signal_type_t sig_type = *p_sg_p;
 
@@ -199,15 +251,15 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
                 bool is_new = esp_zb_bdb_is_factory_new();
                 ESP_LOGI(TAG, "=> Zigbee started (%s)",
                          is_new ? "NEW NETWORK" : "EXISTING NETWORK");
-                
+
                 if (is_new) {
                     ESP_LOGI(TAG, "=> Starting network formation...");
                     esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_FORMATION);
                 } else {
                     ESP_LOGI(TAG, "=> Existing network found! Restoring cached states...");
                     zb_restore_connections(); // Try to reconnect devices from stack cache
-                    ESP_LOGI(TAG, "=> Opening pairing (30s) for any new devices");
-                    esp_zb_bdb_open_network(30);
+                    ESP_LOGI(TAG, "=> Opening pairing (%ds) for any new devices", CONFIG_VALVE_PERMIT_JOIN_SECONDS);
+                    esp_zb_bdb_open_network(CONFIG_VALVE_PERMIT_JOIN_SECONDS);
                 }
             } else {
                 ESP_LOGE(TAG, "=> Zigbee start ERROR: %s", esp_err_to_name(err_status));
@@ -247,7 +299,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
             get_timestamp(tbuf, sizeof(tbuf));
             ESP_LOGI(TAG, "%s ================================================", tbuf);
             ESP_LOGI(TAG, "=> Device announced: 0x%04x (IEEE: %02x%02x%02x%02x%02x%02x%02x%02x)",
-                     (unsigned int)short_addr, 
+                     (unsigned int)short_addr,
                      ieee[7], ieee[6], ieee[5], ieee[4], ieee[3], ieee[2], ieee[1], ieee[0]);
 
             // Search in config and associate
@@ -256,14 +308,22 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
                 ESP_LOGI(TAG, "=> MATCHING: '%s' -> 0x%04x", found->name, (unsigned int)short_addr);
                 blink_led(2, 80, 80); // Fast double blink on successful connection
                 // Apply correct temperature for current time immediately
-                time_t now; struct tm ti;
-                time(&now); localtime_r(&now, &ti);
-                int16_t target = config_get_current_temp(found, ti.tm_hour, ti.tm_min);
-                ESP_LOGI(TAG, "=> Setting immediately %.1f C", target / 100.0);
-                set_temperature(short_addr, target, found->name);
+                time_t now;
+                struct tm ti;
+                time(&now);
+                localtime_r(&now, &ti);
+                if (!found->enabled) {
+                    ESP_LOGI(TAG, "=> '%s' is disabled in config: setpoint left untouched", found->name);
+                } else if (!time_is_valid(&ti)) {
+                    ESP_LOGW(TAG, "=> Time not synchronized: setpoint left untouched");
+                } else {
+                    int16_t target = device_target(found - g_devices, &ti);
+                    ESP_LOGI(TAG, "=> Setting immediately %.1f C", target / 100.0);
+                    set_temperature(short_addr, target, found->name);
+                }
             } else {
                 ESP_LOGW(TAG, "=> Device 0x%04x NOT found in JSON config!", (unsigned int)short_addr);
-                ESP_LOGW(TAG, "   Update 'ieee' in config with: \"%02x%02x%02x%02x%02x%02x%02x%02x\"", 
+                ESP_LOGW(TAG, "   Update 'ieee' in config with: \"%02x%02x%02x%02x%02x%02x%02x%02x\"",
                          ieee[7], ieee[6], ieee[5], ieee[4], ieee[3], ieee[2], ieee[1], ieee[0]);
             }
             ESP_LOGI(TAG, "================================================");
@@ -301,23 +361,24 @@ static void zb_buttons_handler(switch_func_pair_t *button_func_pair) {
         device_config_t *d = &g_devices[i];
         if (!d->enabled || !d->connected) continue;
         int16_t target = toggle_high ? d->temp_high : d->temp_low;
+        s_forced_temp[i] = target; // kept by the periodic re-sync until the next slot transition
         set_temperature(d->zb_short_addr, target, d->name);
     }
 }
 
 // 4. WIFI
-static void wifi_event_handler(void* arg, esp_event_base_t event_base,
-                                int32_t event_id, void* event_data) {
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "=> WiFi STA started, connecting...");
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
+        wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)event_data;
         ESP_LOGW(TAG, "=> WiFi disconnected (reason: %d), retrying...", event->reason);
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "=> WiFi Connected! IP: " IPSTR, IP2STR(&event->ip_info.ip));
         // Signal that IP is ready
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
@@ -363,7 +424,7 @@ static void esp_zb_task(void *pvParameters) {
     esp_zb_init(&zb_nwk_cfg);
 
     esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
-    
+
     // Server clusters (Basic)
     esp_zb_attribute_list_t *basic_attr = esp_zb_basic_cluster_create(NULL);
     esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
@@ -376,14 +437,18 @@ static void esp_zb_task(void *pvParameters) {
 
     esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
     esp_zb_endpoint_config_t ep_cfg = {
-        .endpoint       = HA_VALVE_REGULATOR_ENDPOINT,
+        .endpoint = HA_VALVE_REGULATOR_ENDPOINT,
         .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
-        .app_device_id  = ESP_ZB_HA_HOME_GATEWAY_DEVICE_ID,
+        .app_device_id = ESP_ZB_HA_HOME_GATEWAY_DEVICE_ID,
     };
     esp_zb_ep_list_add_ep(ep_list, cluster_list, ep_cfg);
     esp_zb_device_register(ep_list);
 
+#if CONFIG_VALVE_ZB_SCAN_ALL_CHANNELS
     esp_zb_set_primary_network_channel_set(ESP_ZB_TRANSCEIVER_ALL_CHANNELS_MASK);
+#else
+    esp_zb_set_primary_network_channel_set(1l << CONFIG_VALVE_ZB_PRIMARY_CHANNEL);
+#endif
 
     ESP_ERROR_CHECK(esp_zb_start(false));
     ESP_LOGI(TAG, "=> Zigbee stack started. Entering main loop...");
@@ -445,27 +510,37 @@ void app_main(void) {
     // PHASE 4: SNTP
     ESP_LOGI(TAG, "[4/6] SNTP Synchronization...");
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(0, CONFIG_VALVE_NTP_SERVER);
     esp_sntp_init();
 
-    time_t now; struct tm timeinfo;
+    time_t now;
+    struct tm timeinfo;
     int retry = 0;
     while (retry++ < 30) {
-        time(&now); localtime_r(&now, &timeinfo);
-        if (timeinfo.tm_year > (2024 - 1900)) break;
+        time(&now);
+        localtime_r(&now, &timeinfo);
+        if (time_is_valid(&timeinfo)) break;
         ESP_LOGI(TAG, "   Waiting for SNTP... (%d/30)", retry);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
-    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    setenv("TZ", CONFIG_VALVE_TIMEZONE, 1);
     tzset();
-    time(&now); localtime_r(&now, &timeinfo);
+    time(&now);
+    localtime_r(&now, &timeinfo);
     char tbuf[32];
     strftime(tbuf, sizeof(tbuf), "%d/%m/%Y %H:%M:%S", &timeinfo);
-    if (timeinfo.tm_year > (2024 - 1900)) {
+    bool time_ok = time_is_valid(&timeinfo);
+    if (time_ok) {
         ESP_LOGI(TAG, "=> TIME SYNCHRONIZED: %s", tbuf);
         blink_led(1, 1000, 0); // 1s blink for time sync
     } else {
         ESP_LOGW(TAG, "=> SNTP failed. Time: %s", tbuf);
+    }
+
+    s_degraded = !cfg_ok || !time_ok;
+    if (s_degraded && CONFIG_VALVE_DEGRADED_RESTART_MINUTES > 0) {
+        ESP_LOGW(TAG, "=> Degraded start: will restart in %d min to retry config/time",
+                 CONFIG_VALVE_DEGRADED_RESTART_MINUTES);
     }
 
     // PHASE 5: Turn off WiFi completely (free radio for Zigbee)
@@ -478,15 +553,14 @@ void app_main(void) {
     ESP_LOGI(TAG, "[6/6] Starting Zigbee Coordinator...");
     esp_zb_platform_config_t config = {
         .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
-        .host_config  = ESP_ZB_DEFAULT_HOST_CONFIG(),
+        .host_config = ESP_ZB_DEFAULT_HOST_CONFIG(),
     };
     ESP_ERROR_CHECK(esp_zb_platform_config(&config));
 
     static switch_func_pair_t button_func_pair[] = {
-        {GPIO_INPUT_IO_TOGGLE_SWITCH, SWITCH_ONOFF_TOGGLE_CONTROL}
-    };
+        {GPIO_INPUT_IO_TOGGLE_SWITCH, SWITCH_ONOFF_TOGGLE_CONTROL}};
     switch_driver_init(button_func_pair, PAIR_SIZE(button_func_pair), zb_buttons_handler);
 
-    xTaskCreate(chronothermostat_task, "task_crono",  4096, NULL, 5, NULL);
-    xTaskCreate(esp_zb_task,          "Zigbee_main", 4096, NULL, 5, NULL);
+    xTaskCreate(chronothermostat_task, "task_crono", 4096, NULL, 5, NULL);
+    xTaskCreate(esp_zb_task, "Zigbee_main", 4096, NULL, 5, NULL);
 }
