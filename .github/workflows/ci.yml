@@ -5,12 +5,16 @@ on:
     branches: [master, develop]
   pull_request:
 
+# Jobs only need to read the repository.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Firmware build (esp32c6)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The real secrets.h is gitignored; provide a dummy so the firmware compiles.
       - name: Provide dummy secrets
@@ -25,9 +29,9 @@ jobs:
 
   host-tests:
     name: Host unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure
         run: cmake -S test/host -B build_host
@@ -40,11 +44,11 @@ jobs:
 
   format-check:
     name: clang-format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.x'
 
