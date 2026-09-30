@@ -42,14 +42,14 @@
 extern "C" {
 #endif
 
-/* user should configure which I/O port as toggle switch input, default is GPIO9 */
-#define GPIO_INPUT_IO_TOGGLE_SWITCH  GPIO_NUM_9
+/* user should configure which I/O port as toggle switch input (see Kconfig.projbuild) */
+#define GPIO_INPUT_IO_TOGGLE_SWITCH CONFIG_VALVE_BUTTON_GPIO
 
 /* config button level depends on the pull up/down setting
    push button level is on level = 1 when pull-down enable
    push button level is on level = 0 when pull-up enable
 */
-#define GPIO_INPUT_LEVEL_ON     0
+#define GPIO_INPUT_LEVEL_ON 0
 
 #define ESP_INTR_FLAG_DEFAULT 0
 

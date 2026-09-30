@@ -2,6 +2,6 @@
 dependencies:
   espressif/esp-zboss-lib: "~1.6.0"
   espressif/esp-zigbee-lib: "~1.6.0"
-  ## Required IDF version
+  ## Required IDF version (esp-zigbee-lib 1.6.x does not support IDF 6)
   idf:
-    version: ">=5.0.0"
+    version: ">=5.3.0,<6.0.0"

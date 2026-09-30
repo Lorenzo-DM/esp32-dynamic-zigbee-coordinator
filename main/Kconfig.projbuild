@@ -1,0 +1,84 @@
+menu "Valve Regulator Configuration"
+
+    config VALVE_LED_GPIO
+        int "Status LED GPIO number"
+        default 15
+        range 0 48
+        help
+            GPIO used for the status/feedback LED.
+
+    config VALVE_BUTTON_GPIO
+        int "BOOT button GPIO number"
+        default 9
+        range 0 48
+        help
+            GPIO used for the manual toggle (BOOT) button. Active low with pull-up.
+
+    config VALVE_ZB_ENDPOINT
+        int "Zigbee coordinator endpoint"
+        default 1
+        range 1 240
+        help
+            Endpoint ID registered for the coordinator's Home Automation profile.
+
+    config VALVE_ZB_MAX_CHILDREN
+        int "Max connected Zigbee devices"
+        default 10
+        range 1 32
+        help
+            Maximum number of child devices the coordinator accepts.
+
+    config VALVE_ZB_SCAN_ALL_CHANNELS
+        bool "Scan all Zigbee channels during network formation"
+        default y
+        help
+            When enabled, the coordinator scans every 802.15.4 channel and picks one
+            automatically. Disable to pin the network to a fixed channel.
+
+    config VALVE_ZB_PRIMARY_CHANNEL
+        int "Fixed Zigbee primary channel"
+        depends on !VALVE_ZB_SCAN_ALL_CHANNELS
+        default 13
+        range 11 26
+        help
+            802.15.4 channel to form the network on when channel scanning is disabled.
+
+    config VALVE_PERMIT_JOIN_SECONDS
+        int "Permit-join window (seconds)"
+        default 30
+        range 0 254
+        help
+            How long pairing stays open for new devices after the network is ready.
+
+    config VALVE_RESYNC_MINUTES
+        int "Setpoint re-sync interval (minutes)"
+        default 30
+        range 0 1440
+        help
+            Periodically re-send the current target temperature to every connected
+            valve, so a lost Zigbee write is corrected without waiting for the next
+            slot transition. A manual (BOOT button) override is re-sent as-is.
+            0 disables the periodic re-sync (the one at startup is always done).
+
+    config VALVE_DEGRADED_RESTART_MINUTES
+        int "Restart after degraded boot (minutes)"
+        default 30
+        range 0 1440
+        help
+            If the JSON config could not be downloaded or SNTP failed at boot,
+            restart after this many minutes to retry (WiFi is off afterwards, so
+            there is no other way to recover). 0 disables the restart.
+
+    config VALVE_NTP_SERVER
+        string "SNTP server"
+        default "pool.ntp.org"
+        help
+            Hostname of the NTP server used for time synchronization.
+
+    config VALVE_TIMEZONE
+        string "POSIX timezone string"
+        default "CET-1CEST,M3.5.0,M10.5.0/3"
+        help
+            POSIX TZ string applied via setenv("TZ", ...). Default is Central European Time.
+
+endmenu
