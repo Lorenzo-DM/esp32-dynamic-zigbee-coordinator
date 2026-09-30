@@ -492,23 +492,8 @@ void app_main(void) {
         ESP_LOGW(TAG, "   WiFi timeout! Proceeding anyway...");
     }
 
-    // PHASE 3: Download JSON config
-    ESP_LOGI(TAG, "[3/6] Downloading JSON config from: %s", CONFIG_JSON_URL);
-    bool cfg_ok = config_load_from_url(CONFIG_JSON_URL);
-    if (cfg_ok) {
-        ESP_LOGI(TAG, "=> Loaded %d devices from JSON", g_device_count);
-    } else {
-        ESP_LOGW(TAG, "=> JSON download failed! Continuing without config.");
-    }
-
-    // Visual feedback: blink X times (X = devices found in config)
-    if ((bits & WIFI_CONNECTED_BIT) && cfg_ok) {
-        ESP_LOGI(TAG, "=> WiFi & Config OK: Blinking %d times...", g_device_count);
-        blink_led(g_device_count, 150, 150);
-    }
-
-    // PHASE 4: SNTP
-    ESP_LOGI(TAG, "[4/6] SNTP Synchronization...");
+    // PHASE 3: SNTP (first: HTTPS certificate validation needs a valid clock)
+    ESP_LOGI(TAG, "[3/6] SNTP Synchronization...");
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, CONFIG_VALVE_NTP_SERVER);
     esp_sntp_init();
@@ -535,6 +520,21 @@ void app_main(void) {
         blink_led(1, 1000, 0); // 1s blink for time sync
     } else {
         ESP_LOGW(TAG, "=> SNTP failed. Time: %s", tbuf);
+    }
+
+    // PHASE 4: Download JSON config (HTTPS validated against the CA bundle)
+    ESP_LOGI(TAG, "[4/6] Downloading JSON config from: %s", CONFIG_JSON_URL);
+    bool cfg_ok = config_load_from_url(CONFIG_JSON_URL);
+    if (cfg_ok) {
+        ESP_LOGI(TAG, "=> Loaded %d devices from JSON", g_device_count);
+    } else {
+        ESP_LOGW(TAG, "=> JSON download failed! Continuing without config.");
+    }
+
+    // Visual feedback: blink X times (X = devices found in config)
+    if ((bits & WIFI_CONNECTED_BIT) && cfg_ok) {
+        ESP_LOGI(TAG, "=> WiFi & Config OK: Blinking %d times...", g_device_count);
+        blink_led(g_device_count, 150, 150);
     }
 
     s_degraded = !cfg_ok || !time_ok;
