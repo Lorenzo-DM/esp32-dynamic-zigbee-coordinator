@@ -27,6 +27,25 @@ This project requires the Espressif IoT Development Framework [ESP-IDF](https://
 
 The Zigbee libraries (`esp-zboss-lib`, `esp-zigbee-lib` 1.6.x) are downloaded automatically by the IDF Component Manager on the first build.
 
+Typical setup on Ubuntu/Debian (see the official guide for other systems):
+
+```bash
+sudo apt install git wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
+cd <path-to>/esp-idf
+git submodule update --init --recursive
+./install.sh esp32c6
+. ./export.sh        # required in every new shell
+```
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| `"cmake" must be available on the PATH` | Install the system prerequisites above (`cmake`, `ninja-build`, ...). |
+| `xtensa-esp32-elf-gcc ... not found` | The target is still `esp32`: a previous `idf.py set-target esp32c6` failed (e.g. because of the missing `cmake`). Run `idf.py fullclean && idf.py set-target esp32c6`. |
+| `git submodule update --init --recursive` suggested by CMake, or `ESP-IDF vX-dirty` | ESP-IDF submodules are out of sync: run that command inside the `esp-idf` directory. |
+| `JSON download failed` with an `esp-tls` / certificate error | The server certificate is not signed by a public CA (or the clock is not synchronized). See the *HTTPS note*. |
+
 ## Software Configuration
 
 ### 1. Secrets
@@ -50,7 +69,7 @@ The firmware downloads the configuration from:
 
 This is the **Gitea** raw-file layout, so `BASE_URL` is typically the repository URL, e.g. `http://gitea.local:3000/user/heating-config`. Other hosts (GitHub, a plain web server, …) use different paths: adjust `CONFIG_JSON_URL` in `main/ha_valve_regulator.c` accordingly.
 
-> **HTTPS note**: server certificates are not verified (no CA bundle or certificate is configured), so with the default ESP-IDF settings HTTPS URLs fail and only **plain HTTP** works. Host the configuration on a trusted local network.
+> **HTTPS note**: HTTPS URLs are supported and the server certificate is validated against the ESP-IDF certificate bundle (Mozilla root CAs), so any site with a certificate from a public CA (e.g. Let's Encrypt) works out of the box. Self-signed certificates and private CAs are **rejected**: use plain HTTP on a trusted local network in that case. Validation needs a correct clock, which is why the time is synchronized before the download.
 
 ### 2. JSON Configuration Format
 
@@ -139,17 +158,17 @@ Limits and validation:
 
 1. **NVS Init**: Prepares internal storage.
 2. **WiFi Connect**: Connects to the configured SSID (waits up to 20 s).
-3. **HTTP Download**: Fetches the TRV configuration JSON.
-4. **SNTP Sync**: Synchronizes the internal clock with network time (waits up to 30 s).
+3. **SNTP Sync**: Synchronizes the internal clock with network time (waits up to 30 s). This comes first because HTTPS certificate validation needs a valid clock.
+4. **HTTP(S) Download**: Fetches the TRV configuration JSON.
 5. **WiFi Shutdown**: De-initializes WiFi components to optimize Zigbee performance.
 6. **Zigbee Start**: Initializes the Zigbee Coordinator (forming a new network on first boot) and opens the network for pairing.
 
-If the download or the SNTP sync fails, the coordinator still starts, but the schedule stays suspended until a restart (see *Re-sync & recovery* below).
+If the SNTP sync or the download fails (an HTTPS download also fails when the clock is not synchronized), the coordinator still starts, but the schedule stays suspended until a restart (see *Re-sync & recovery* below).
 
 ## Usage
 
 - **Pairing**: Put your TRV into pairing mode within the pairing window. Once it joins the network, the ESP32-C6 will match its IEEE address against the JSON config. If found, enabled and the time is synchronized, it will immediately apply the current target temperature. Unknown valves are logged with the `ieee` value to add to the config.
-- **Monitoring**: Use the serial monitor to view current time, connected devices, and temperature updates (a status summary is printed every 5 minutes).
+- **Monitoring**: Use the serial monitor (exit with `Ctrl+]`) to view current time, connected devices, and temperature updates (a status summary is printed every 5 minutes).
 - **Manual Override**: Press the **BOOT button** to force all valves to "HIGH" temperature mode. Press again to force them to "LOW" mode. The scheduled automation will resume at the next time slot transition.
 - **Re-sync & recovery**: The current target is re-sent to every connected valve at startup and every 30 minutes (`VALVE_RESYNC_MINUTES`), so a lost Zigbee write or a coordinator reboot is corrected automatically. If the config download or SNTP fails at boot, the schedule is suspended (valves are left untouched) and the board restarts after 30 minutes (`VALVE_DEGRADED_RESTART_MINUTES`) to retry.
 - **LED feedback**:
